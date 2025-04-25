@@ -1,0 +1,6 @@
+.env
+FinalProject/
+vector-store/
+**/pycache
+*.pyc
+__pycache__/
