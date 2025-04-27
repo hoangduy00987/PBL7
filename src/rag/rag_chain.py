@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from sqlalchemy import text
 import os
 from typing import List
+import re
 from langchain.schema import Document
 from typing import Dict
 from langchain.embeddings import OpenAIEmbeddings
@@ -15,24 +16,42 @@ from langchain.vectorstores import Chroma
 from sqlalchemy.orm import Session
 from ..database import get_db, SessionLocal
 from fastapi import Depends
-
+from datetime import datetime, timedelta
 
 dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 load_dotenv(dotenv_path=dotenv_path)
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
 
+def clean_value(value):
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return "null"
+    return str(value).lower() if isinstance(value, str) else str(value)
+
 def convert_from_postgres(db: Session = Depends(get_db)) -> list[Document]:
-    query = "SELECT title, time, content,url FROM paper"
+    query = "SELECT title, time, content, url, topic_name FROM paper"
     result = db.execute(text(query))
 
     documents = []
-    for title, time, content,url in result.fetchall():
-        metadata = {"title": title, "time": str(time), "url": url}
+    for title, time, content, url, topic_name in result.fetchall():
+        title = clean_value(title)
+        content = clean_value(content)
+        url = clean_value(url)
+        topic_name = clean_value(topic_name)
+        time = clean_value(time)
+
+        metadata = {
+            "title": title,
+            "time": time,
+            "url": url,
+            "topic_name": topic_name
+        }
+
         doc = Document(page_content=content, metadata=metadata)
         documents.append(doc)
         print(f"Title: {title}")
     return documents
+
 
 
 def create_vector_store(chunks: List[Document], db_path: str) -> Chroma:
@@ -43,19 +62,63 @@ def create_vector_store(chunks: List[Document], db_path: str) -> Chroma:
     )
     return db
 
-
-def retrieve_context(db: Chroma, query: str) -> List[Document]:
-    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+def is_within_time_window(paper_time: str, current_time: str,time_window: timedelta) -> bool:
+    if not paper_time or not current_time:
+        return False
+    try:
+        paper_time = datetime.strptime(paper_time,"%Y-%m-%d %H:%M:%S")
+        time_dfference = current_time - paper_time
+        return time_dfference <= time_window
+    except ValueError:
+        return False
+def retrieve_context(db: Chroma, query: str,time_window:timedelta=timedelta(weeks=1)) -> List[Document]:
+    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 20})
     print("Relevant chunks are retrieved...\n")
     relevant_chunks = retriever.invoke(query)
-    # print(relevant_chunks)
-    return relevant_chunks
+    specific_date = extract_date_from_query(query)
+    now =  datetime.now()
+    if specific_date:
+        filtered_chunks = [
+            chunk for chunk in relevant_chunks if is_same_day(chunk.metadata["time"], specific_date)
+        ]
+    else:
+        filtered_chunks = [
+            chunk for chunk in relevant_chunks if is_within_time_window(chunk.metadata["time"], now, time_window)
+        ]
+        # print(relevant_chunks)
+    return filtered_chunks
 
+def is_same_day(paper_time: str, specific_date: datetime) -> bool:
+    if not paper_time:
+        return False
+    try:
+        paper_time = datetime.strptime(paper_time, "%Y-%m-%d %H:%M:%S")
+        return paper_time.date() == specific_date.date()
+    except ValueError:
+        return False
+    
 
+def extract_date_from_query(query: str) -> str:
+    date_pattern = r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})"
+    match = re.search(date_pattern, query)
+    if match:
+        day = int(match.group(1))
+        month = int(match.group(2))
+        year = int(match.group(3))
+        return datetime(year, month, day)
+    date_pattern_alt = r"Ngày (\d{1,2}) tháng (\d{1,2}) năm (\d{4})"
+    match_alt = re.search(date_pattern_alt, query)
+    if match_alt:
+        day = int(match_alt.group(1))
+        month = int(match_alt.group(2))
+        year = int(match_alt.group(3))
+        return datetime(year, month, day)
+    return None
 def data_chunks(text: List[Document]) -> List[Document]:
     print("Data file text is chunked...")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     chunks = text_splitter.split_documents(text)
+ 
     return chunks
 
 
@@ -72,7 +135,6 @@ def embedding_pipeline():
     with SessionLocal() as db:
         docs = convert_from_postgres(db)
         print(f"Loaded {len(docs)} documents from PostgreSQL.")
-
         chunks = data_chunks(docs)
         print(f"Split into {len(chunks)} text chunks.")
 
@@ -87,6 +149,12 @@ def get_context(inputs: Dict[str, str]) -> Dict[str, str]:
     db = Chroma(persist_directory=db_path, embedding_function=embedding_model)
     relevant_chunks = retrieve_context(db, query)
     print("=====", len(relevant_chunks))
+    for chunk in relevant_chunks:
+        # Lấy thời gian từ metadata của chunk
+        time_info = chunk.metadata.get("time", "Không có thông tin thời gian")
+        
+        # In ra thông tin thời gian của chunk
+        print(f"Chunk time: {time_info}")
     context = build_context(relevant_chunks)
     if "url" in query or "đường dẫn" in query or "link" in query:
         urls = []
