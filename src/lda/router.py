@@ -13,7 +13,7 @@ lda_router = APIRouter(
 )
 
 @lda_router.get("/topic-trends/")
-async def fetch_topic_trends_in_month(month: int, year: int):
+async def fetch_topic_trends_in_month(month: int, year: int, db: Session = Depends(get_db)):
     try:
         current = datetime.now()
         if not month:
@@ -21,7 +21,7 @@ async def fetch_topic_trends_in_month(month: int, year: int):
         if not year:
             year = current.year
         
-        trends = get_topic_trends(month=month, year=year)
+        trends = get_topic_trends(month=month, year=year, db=db)
         return trends
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
