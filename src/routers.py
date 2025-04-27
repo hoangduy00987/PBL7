@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .database import get_db
 from sqlalchemy import text
-from .chroma import ChatRequest, ChatResponse
+from .schemas import ChatRequest, ChatResponse
 from .rag.rag_chain import rag_chat,embedding_pipeline
 from .lda.router import lda_router
 from dotenv import load_dotenv
