@@ -1,12 +1,31 @@
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .database import get_db
 from sqlalchemy import text
 from .chroma import ChatRequest, ChatResponse
 from .rag.rag_chain import rag_chat,embedding_pipeline
+from .lda.router import lda_router
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 
 app = FastAPI()
+
+allowed_origins = os.getenv("ALLOWED_CORS_ORIGINS").split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+app.include_router(lda_router)
 
 
 @app.get("/papers")
