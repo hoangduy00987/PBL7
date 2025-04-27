@@ -11,7 +11,6 @@ import os
 
 load_dotenv()
 
-
 app = FastAPI()
 
 allowed_origins = os.getenv("ALLOWED_CORS_ORIGINS").split(",")
