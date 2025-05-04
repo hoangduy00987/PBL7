@@ -11,4 +11,13 @@ services:
       - .env
     volumes:
       - .:/app
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
