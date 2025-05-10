@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   fastapi-demo:
-    build: 
+    build:
       context: ./src
       dockerfile: Dockerfile
     ports:
@@ -21,3 +21,14 @@ services:
     image: redis:alpine
     ports:
       - "6379:6379"
+
+  ngrok:
+    image: ngrok/ngrok
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+      - NGROK_REGION=ap
+    command: http fastapi-demo:8000
+    depends_on:
+      - fastapi-demo
+    ports:
+      - "4040:4040"
