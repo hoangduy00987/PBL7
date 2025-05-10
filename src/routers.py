@@ -8,16 +8,23 @@ from .rag.rag_chain import rag_chat,embedding_pipeline
 from .lda.router import lda_router
 from dotenv import load_dotenv
 import os
+from .embedding_task import start_scheduler
+from contextlib import asynccontextmanager
+from fastapi.responses import StreamingResponse
 
 load_dotenv()
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+app = FastAPI(lifespan=lifespan)
 
 allowed_origins = os.getenv("ALLOWED_CORS_ORIGINS").split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,10 +44,15 @@ def get_papers(db: Session = Depends(get_db)):
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
-    answer = rag_chat(req.question)
-    return ChatResponse(answer=answer)
+async def chat(req: ChatRequest):
+    # Giả sử rag_chat trả về một async_generator
+    answer = rag_chat(req.question)  # rag_chat cần trả về async_generator
 
+    async def generate_answer():
+        async for chunk in answer:
+            yield chunk
+
+    return StreamingResponse(generate_answer(), media_type="text/plain")
 
 @app.get("/run-embedding")
 async def run_embedding():
