@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnableLambda
 from dotenv import load_dotenv
 from sqlalchemy import text
 import os
+import asyncio
 from typing import List
 import re
 from langchain.schema import Document
@@ -29,37 +30,44 @@ def clean_value(value):
     return str(value).lower() if isinstance(value, str) else str(value)
 
 def convert_from_postgres(db: Session = Depends(get_db)) -> list[Document]:
-    query = "SELECT title, time, content, url, topic_name FROM paper"
+    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
+    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
+    query =  "SELECT title, time, content, url FROM paper"
     result = db.execute(text(query))
 
     documents = []
-    for title, time, content, url, topic_name in result.fetchall():
+    for title, time, content, url in result.fetchall():
         title = clean_value(title)
         content = clean_value(content)
         url = clean_value(url)
-        topic_name = clean_value(topic_name)
         time = clean_value(time)
 
         metadata = {
             "title": title,
             "time": time,
-            "url": url,
-            "topic_name": topic_name
+            "url": url
         }
 
         doc = Document(page_content=content, metadata=metadata)
         documents.append(doc)
-        print(f"Title: {title}")
+        # print(f"Title: {title}")
     return documents
 
 
 
 def create_vector_store(chunks: List[Document], db_path: str) -> Chroma:
-    print("Chrome vector store is created...\n")
     embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
-    db = Chroma.from_documents(
-        documents=chunks, embedding=embedding_model, persist_directory=db_path
-    )
+
+    if os.path.exists(db_path) and os.listdir(db_path):
+        db = Chroma(persist_directory=db_path, embedding_function=embedding_model)
+        print("Loaded existing vector store.")
+    else:
+        db = Chroma.from_documents(documents=chunks, embedding=embedding_model, persist_directory=db_path)
+        print("Created new vector store.")
+        return db
+
+    db.add_documents(chunks)
+    print("Added documents to existing vector store.")
     return db
 
 def is_within_time_window(paper_time: str, current_time: str,time_window: timedelta) -> bool:
@@ -72,7 +80,7 @@ def is_within_time_window(paper_time: str, current_time: str,time_window: timede
     except ValueError:
         return False
 def retrieve_context(db: Chroma, query: str,time_window:timedelta=timedelta(weeks=1)) -> List[Document]:
-    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 20})
+    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 40})
     print("Relevant chunks are retrieved...\n")
     relevant_chunks = retriever.invoke(query)
     specific_date = extract_date_from_query(query)
@@ -116,7 +124,7 @@ def extract_date_from_query(query: str) -> str:
     return None
 def data_chunks(text: List[Document]) -> List[Document]:
     print("Data file text is chunked...")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     chunks = text_splitter.split_documents(text)
  
     return chunks
@@ -166,28 +174,38 @@ def get_context(inputs: Dict[str, str]) -> Dict[str, str]:
         return {"context": "\n".join(urls), "query": query}
     return {"context": context, "query": query}
 
-def rag_chat(question: str) -> str:
-    prompt = """Bạn là một trợ lý AI được huấn luyện để trả lời câu hỏi dựa trên thông tin cung cấp.
+async def rag_chat(question: str):
+    db_path = "vector-store"
+    context_data = get_context({"query": question, "db_path": db_path})
+    context = context_data["context"]
 
-    - Chỉ sử dụng thông tin trong phần "Ngữ cảnh" để trả lời.
-    - Trả lời một cách NGẮN GỌN, VẮN TẮT và đầy đủ ý chính như tóm tắt tin tức.
-    - Nếu như có nhiều tin tức khác nhau thì hãy liệt kê các tin tức đó ra 
-    - Không thêm suy đoán hoặc thông tin bên ngoài.
+    prompt_template = """Bạn là một trợ lý AI được huấn luyện để trả lời câu hỏi dựa trên thông tin cung cấp.
 
-    Câu hỏi: {query}
+        - Chỉ sử dụng thông tin trong phần "Ngữ cảnh" để trả lời.
+        - Trả lời một cách NGẮN GỌN, VẮN TẮT và đầy đủ ý chính như tóm tắt tin tức.
+        - Nếu có nhiều thông tin liên quan, hãy liệt kê các điểm quan trọng.
+        - Không đưa ra suy đoán hoặc thông tin ngoài ngữ cảnh.
 
-    Ngữ cảnh: {context}
+        Câu hỏi: {query}
 
-    Nếu không thể tìm thấy câu trả lời trong ngữ cảnh, hãy trả lời:
-    "Câu trả lời cho câu hỏi này không có trong nội dung đã cho."
-    """
+        Ngữ cảnh: {context}
+        """
 
-    rag_prompt = ChatPromptTemplate.from_template(prompt)
+
+    rag_prompt = ChatPromptTemplate.from_template(prompt_template)
+    formatted_prompt = rag_prompt.format_prompt(query=question, context=context)
+    messages = formatted_prompt.to_messages()
+
     llm = ChatOpenAI(model="gpt-4o-mini")
 
-    str_parser = StrOutputParser()
+    # Stream response
+    stream = llm.stream(messages)
 
-    rag_chain = RunnableLambda(get_context) | rag_prompt | llm | str_parser
-    current_dir = "vector-store"
-    result = rag_chain.invoke({"query": question, "db_path": current_dir})
-    return result
+    # Convert sync generator to async generator
+    async def async_from_sync_generator(sync_gen):
+        for item in sync_gen:
+            await asyncio.sleep(0)  # Yield control to event loop
+            yield item
+
+    async for chunk in async_from_sync_generator(stream):
+        yield f"{chunk.content}"

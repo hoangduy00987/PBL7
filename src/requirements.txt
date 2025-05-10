@@ -7,7 +7,9 @@ python-dotenv
 langchain-community
 langchain
 langchain_chroma
-langchain_openai
+langchain-openai
 pandas
 scikit-learn
 redis
+apscheduler
+pytz
