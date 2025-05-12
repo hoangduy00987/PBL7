@@ -46,13 +46,9 @@ def get_papers(db: Session = Depends(get_db)):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     # Giả sử rag_chat trả về một async_generator
-    answer = rag_chat(req.question)  # rag_chat cần trả về async_generator
+    answer = rag_chat(req.question) 
 
-    async def generate_answer():
-        async for chunk in answer:
-            yield chunk
-
-    return StreamingResponse(generate_answer(), media_type="text/plain")
+    return StreamingResponse(answer, media_type="text/plain")
 
 @app.get("/run-embedding")
 async def run_embedding():
@@ -66,3 +62,4 @@ async def run_embedding():
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
