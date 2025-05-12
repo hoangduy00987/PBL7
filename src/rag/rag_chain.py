@@ -18,11 +18,12 @@ from sqlalchemy.orm import Session
 from ..database import get_db, SessionLocal
 from fastapi import Depends
 from datetime import datetime, timedelta
+import logging
 
 dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 load_dotenv(dotenv_path=dotenv_path)
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-
+logging.basicConfig(level=logging.INFO)
 
 def clean_value(value):
     if value is None or (isinstance(value, str) and value.strip() == ""):
@@ -30,9 +31,9 @@ def clean_value(value):
     return str(value).lower() if isinstance(value, str) else str(value)
 
 def convert_from_postgres(db: Session = Depends(get_db)) -> list[Document]:
-    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
-    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
-    query =  "SELECT title, time, content, url FROM paper"
+    query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
+    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= '2025-05-08';"
+    # query =  "SELECT title, time, content, url FROM paper"
     result = db.execute(text(query))
 
     documents = []
@@ -138,17 +139,16 @@ def build_context(relevant_chunks: List[Document]) -> List[Document]:
 
 
 def embedding_pipeline():
-    print("Starting embedding process from PostgreSQL...")
+    logging.info("Starting embedding process from PostgreSQL...")
     db_path = "vector-store"
     with SessionLocal() as db:
         docs = convert_from_postgres(db)
-        print(f"Loaded {len(docs)} documents from PostgreSQL.")
+        logging.info(f"Loaded {len(docs)} documents from PostgreSQL.")
         chunks = data_chunks(docs)
-        print(f"Split into {len(chunks)} text chunks.")
-
+        logging.info(f"Split into {len(chunks)} text chunks.")
         create_vector_store(chunks, db_path)
-        print("Vector store created and saved successfully at:", db_path)
-
+        logging.info("Vector store created and saved successfully at:", db_path)
+    logging.info("Embedding process completed.")
 
 def get_context(inputs: Dict[str, str]) -> Dict[str, str]:
     query, db_path = inputs["query"], inputs["db_path"]
@@ -199,13 +199,7 @@ async def rag_chat(question: str):
     llm = ChatOpenAI(model="gpt-4o-mini")
 
     # Stream response
-    stream = llm.stream(messages)
+    stream = llm.astream(messages)
 
-    # Convert sync generator to async generator
-    async def async_from_sync_generator(sync_gen):
-        for item in sync_gen:
-            await asyncio.sleep(0)  # Yield control to event loop
-            yield item
-
-    async for chunk in async_from_sync_generator(stream):
+    async for chunk in stream:
         yield f"{chunk.content}"
