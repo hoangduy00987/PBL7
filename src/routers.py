@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from sqlalchemy import text
 from .schemas import ChatRequest, ChatResponse
-from .rag.rag_chain import rag_chat,embedding_pipeline
+from .rag.rag_chain import rag_chat,embedding_pipeline,get_latest_time_from_vectorstore
 from .lda.router import lda_router
 from dotenv import load_dotenv
 import os
@@ -62,4 +62,8 @@ async def run_embedding():
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+
+
+
 
