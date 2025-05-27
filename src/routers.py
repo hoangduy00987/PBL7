@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     yield
 app = FastAPI(lifespan=lifespan)
 
-allowed_origins = os.getenv("ALLOWED_CORS_ORIGINS").split(",")
+allowed_origins = os.getenv("ALLOWED_CORS_ORIGINS", "").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,4 +62,8 @@ async def run_embedding():
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+
+
+
 

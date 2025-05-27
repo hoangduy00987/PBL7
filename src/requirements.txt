@@ -13,3 +13,6 @@ scikit-learn
 redis
 apscheduler
 pytz
+transformers 
+sentence-transformers
+cohere

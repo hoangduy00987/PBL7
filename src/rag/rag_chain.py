@@ -7,9 +7,10 @@ from langchain_core.runnables import RunnableLambda
 from dotenv import load_dotenv
 from sqlalchemy import text
 import os
-import asyncio
+from typing import Union
 from typing import List
 import re
+import cohere
 from langchain.schema import Document
 from typing import Dict
 from langchain.embeddings import OpenAIEmbeddings
@@ -19,11 +20,18 @@ from ..database import get_db, SessionLocal
 from fastapi import Depends
 from datetime import datetime, timedelta
 import logging
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.schema import HumanMessage
 
 dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 load_dotenv(dotenv_path=dotenv_path)
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-logging.basicConfig(level=logging.INFO)
+openai_api_key = os.getenv("OPENAI_API_KEY")
+COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+co = cohere.Client(COHERE_API_KEY)
+
+if openai_api_key is not None:
+    os.environ["OPENAI_API_KEY"] = openai_api_key
+# logging.basicConfig(level=logging.INFO)
 
 def clean_value(value):
     if value is None or (isinstance(value, str) and value.strip() == ""):
@@ -32,7 +40,7 @@ def clean_value(value):
 
 def convert_from_postgres(db: Session = Depends(get_db)) -> list[Document]:
     query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
-    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= '2025-05-08';"
+    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= '2025-05-13';"
     # query =  "SELECT title, time, content, url FROM paper"
     result = db.execute(text(query))
 
@@ -51,78 +59,35 @@ def convert_from_postgres(db: Session = Depends(get_db)) -> list[Document]:
 
         doc = Document(page_content=content, metadata=metadata)
         documents.append(doc)
-        # print(f"Title: {title}")
     return documents
 
-
-
-def create_vector_store(chunks: List[Document], db_path: str) -> Chroma:
+def create_vector_store(chunks: List[Document], db_path: str, batch_size: int = 5000) -> Chroma:
     embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
 
     if os.path.exists(db_path) and os.listdir(db_path):
         db = Chroma(persist_directory=db_path, embedding_function=embedding_model)
         print("Loaded existing vector store.")
+        
+        # Chia nhỏ và thêm batch
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i+batch_size]
+            db.add_documents(batch)
+            logging.info(f"Added batch {i // batch_size + 1} to vector store.")
     else:
+        # Nếu vector store chưa tồn tại, khởi tạo luôn với toàn bộ documents (nếu nhỏ hơn giới hạn)
         db = Chroma.from_documents(documents=chunks, embedding=embedding_model, persist_directory=db_path)
         print("Created new vector store.")
-        return db
-
-    db.add_documents(chunks)
-    print("Added documents to existing vector store.")
     return db
 
-def is_within_time_window(paper_time: str, current_time: str,time_window: timedelta) -> bool:
-    if not paper_time or not current_time:
-        return False
-    try:
-        paper_time = datetime.strptime(paper_time,"%Y-%m-%d %H:%M:%S")
-        time_dfference = current_time - paper_time
-        return time_dfference <= time_window
-    except ValueError:
-        return False
-def retrieve_context(db: Chroma, query: str,time_window:timedelta=timedelta(weeks=1)) -> List[Document]:
-    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 40})
+
+    
+def retrieve_context(db: Chroma, query: str) -> List[Document]:
+    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 50})
     print("Relevant chunks are retrieved...\n")
     relevant_chunks = retriever.invoke(query)
-    specific_date = extract_date_from_query(query)
-    now =  datetime.now()
-    if specific_date:
-        filtered_chunks = [
-            chunk for chunk in relevant_chunks if is_same_day(chunk.metadata["time"], specific_date)
-        ]
-    else:
-        filtered_chunks = [
-            chunk for chunk in relevant_chunks if is_within_time_window(chunk.metadata["time"], now, time_window)
-        ]
-        # print(relevant_chunks)
-    return filtered_chunks
+    return relevant_chunks
 
-def is_same_day(paper_time: str, specific_date: datetime) -> bool:
-    if not paper_time:
-        return False
-    try:
-        paper_time = datetime.strptime(paper_time, "%Y-%m-%d %H:%M:%S")
-        return paper_time.date() == specific_date.date()
-    except ValueError:
-        return False
-    
 
-def extract_date_from_query(query: str) -> str:
-    date_pattern = r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})"
-    match = re.search(date_pattern, query)
-    if match:
-        day = int(match.group(1))
-        month = int(match.group(2))
-        year = int(match.group(3))
-        return datetime(year, month, day)
-    date_pattern_alt = r"Ngày (\d{1,2}) tháng (\d{1,2}) năm (\d{4})"
-    match_alt = re.search(date_pattern_alt, query)
-    if match_alt:
-        day = int(match_alt.group(1))
-        month = int(match_alt.group(2))
-        year = int(match_alt.group(3))
-        return datetime(year, month, day)
-    return None
 def data_chunks(text: List[Document]) -> List[Document]:
     print("Data file text is chunked...")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
@@ -131,7 +96,7 @@ def data_chunks(text: List[Document]) -> List[Document]:
     return chunks
 
 
-def build_context(relevant_chunks: List[Document]) -> List[Document]:
+def build_context(relevant_chunks: List[Document]) -> str:
     print("Context is built from relevant chunks")
     context = "\n\n".join([chunk.page_content for chunk in relevant_chunks])
     print(context)
@@ -150,56 +115,116 @@ def embedding_pipeline():
         logging.info("Vector store created and saved successfully at:", db_path)
     logging.info("Embedding process completed.")
 
+
 def get_context(inputs: Dict[str, str]) -> Dict[str, str]:
     query, db_path = inputs["query"], inputs["db_path"]
     print("Loadinngg the existing vector store\n")
     embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
     db = Chroma(persist_directory=db_path, embedding_function=embedding_model)
     relevant_chunks = retrieve_context(db, query)
-    print("=====", len(relevant_chunks))
-    for chunk in relevant_chunks:
-        # Lấy thời gian từ metadata của chunk
+    documents_text = [doc.page_content for doc in relevant_chunks]
+    rerank_response = co.rerank(model='rerank-v3.5', query=query, documents=documents_text)
+    reranked_indices = [item.index for item in rerank_response.results]
+    top_10_indices = reranked_indices[:10]  
+    top_10_docs = [relevant_chunks[i] for i in top_10_indices]
+    for chunk in top_10_docs:
         time_info = chunk.metadata.get("time", "Không có thông tin thời gian")
-        
-        # In ra thông tin thời gian của chunk
-        print(f"Chunk time: {time_info}")
-    context = build_context(relevant_chunks)
-    if "url" in query or "đường dẫn" in query or "link" in query:
-        urls = []
-        for chunk in relevant_chunks:
-            url = chunk.metadata.get("url", None)
-            if url:
-                urls.append(url)
-        
-        return {"context": "\n".join(urls), "query": query}
+        print(f"Thời gian của chunk: {time_info}")
+
+    context = build_context(top_10_docs)
     return {"context": context, "query": query}
 
+
+# Hàm định dạng lịch sử hội thoại
+def format_chat_history(chat_messages):
+    result = "\n".join(
+        f"Người dùng: {msg.content}" if isinstance(msg, HumanMessage)
+        else f"Trợ lý: {msg.content}"
+        for msg in chat_messages
+    )
+    print(result)
+    return result
+
+
+# Khởi tạo bộ nhớ ngoài hàm để giữ trạng thái liên tục
+memory = ConversationBufferWindowMemory(
+    k=5,
+    memory_key="chat_history",
+    return_messages=True
+)
 async def rag_chat(question: str):
     db_path = "vector-store"
-    context_data = get_context({"query": question, "db_path": db_path})
-    context = context_data["context"]
+    chat_messages = memory.load_memory_variables({})["chat_history"]
 
-    prompt_template = """Bạn là một trợ lý AI được huấn luyện để trả lời câu hỏi dựa trên thông tin cung cấp.
+    # 1. Format lịch sử hội thoại
+    chat_history_text = format_chat_history(chat_messages)
 
-        - Chỉ sử dụng thông tin trong phần "Ngữ cảnh" để trả lời.
-        - Trả lời một cách NGẮN GỌN, VẮN TẮT và đầy đủ ý chính như tóm tắt tin tức.
-        - Nếu có nhiều thông tin liên quan, hãy liệt kê các điểm quan trọng.
-        - Không đưa ra suy đoán hoặc thông tin ngoài ngữ cảnh.
+    # 2. Chuẩn hóa câu hỏi dựa vào lịch sử (nếu câu hỏi quá ngắn, mơ hồ)
+    normalized_question = await clarify_question(question, chat_history_text)
 
-        Câu hỏi: {query}
+    # 3. Truy vấn vector store với câu hỏi đã chuẩn hóa
+    context_data = get_context({"query": normalized_question, "db_path": db_path})
+    context = context_data.get("context", "").strip()
 
-        Ngữ cảnh: {context}
-        """
+    if not context:
+        yield "Xin lỗi, mình không có đủ thông tin để trả lời câu hỏi này."
+        return
+
+    # 4. Tạo prompt với lịch sử + ngữ cảnh + câu hỏi chuẩn hóa
+    prompt_template = """
+    Bạn là một trợ lý AI thông minh. Dựa vào 'Ngữ cảnh' và 'Lịch sử hội thoại' dưới đây, hãy trả lời câu hỏi một cách ngắn gọn, chính xác và chỉ sử dụng thông tin trong ngữ cảnh đã cung cấp.
+
+    - Nếu không có đủ thông tin trong ngữ cảnh, hãy trả lời: "Tôi không có đủ thông tin để trả lời câu hỏi này."
+    - Không phỏng đoán hoặc đưa ra thông tin không có trong ngữ cảnh.
+    - Tránh lặp lại toàn bộ câu hỏi trong câu trả lời.
+
+    Lịch sử hội thoại:
+    {chat_history}
+
+    Ngữ cảnh:
+    {context}
+
+    Câu hỏi:
+    {query}
+    """
+
 
 
     rag_prompt = ChatPromptTemplate.from_template(prompt_template)
-    formatted_prompt = rag_prompt.format_prompt(query=question, context=context)
+    formatted_prompt = rag_prompt.format_prompt(
+        query=normalized_question,
+        context=context,
+        chat_history=chat_history_text
+    )
+
     messages = formatted_prompt.to_messages()
 
     llm = ChatOpenAI(model="gpt-4o-mini")
-
-    # Stream response
     stream = llm.astream(messages)
 
+    response_text = ""
     async for chunk in stream:
-        yield f"{chunk.content}"
+        if isinstance(chunk.content, str):
+            response_text += chunk.content
+            yield chunk.content
+
+    memory.save_context({"input": question}, {"output": response_text})
+
+
+async def clarify_question(question: str, chat_history_text: str) -> str:
+    vague_words = ["vậy", "đội nào", "cái gì", "khi nào", "ở đâu","có những","ở trên","trước đó","trên","họ"]
+
+    if any(w in question.lower() for w in vague_words):
+        prompt = f"""Dựa trên lịch sử hội thoại dưới đây, hãy biến câu hỏi ngắn sau thành câu hỏi đầy đủ rõ nghĩa:
+        Lịch sử hội thoại:
+        {chat_history_text}
+
+        Câu hỏi ngắn: {question}
+
+        Câu hỏi đầy đủ:"""
+
+        llm = ChatOpenAI(model="gpt-4o-mini")
+        full_question_response = await llm.agenerate([[HumanMessage(content=prompt)]])
+        return full_question_response.generations[0][0].text.strip()
+
+    return question
