@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from sqlalchemy import text
 from .schemas import ChatRequest, ChatResponse
-from .rag.rag_chain import rag_chat,embedding_pipeline,get_latest_time_from_vectorstore
+from .rag.rag_chain import rag_chat,embedding_pipeline
 from .lda.router import lda_router
 from dotenv import load_dotenv
 import os
@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     yield
 app = FastAPI(lifespan=lifespan)
 
-allowed_origins = os.getenv("ALLOWED_CORS_ORIGINS").split(",")
+allowed_origins = os.getenv("ALLOWED_CORS_ORIGINS", "").split(",")
 
 app.add_middleware(
     CORSMiddleware,

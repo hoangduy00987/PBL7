@@ -10,6 +10,7 @@ import os
 from typing import Union
 from typing import List
 import re
+import cohere
 from langchain.schema import Document
 from typing import Dict
 from langchain.embeddings import OpenAIEmbeddings
@@ -19,13 +20,15 @@ from ..database import get_db, SessionLocal
 from fastapi import Depends
 from datetime import datetime, timedelta
 import logging
-from langchain.memory import ConversationBufferMemory
-from .rerank import BGEHFReranker
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.schema import HumanMessage
 
-memory = ConversationBufferMemory(memory_key="history", return_messages=True)
 dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 load_dotenv(dotenv_path=dotenv_path)
 openai_api_key = os.getenv("OPENAI_API_KEY")
+COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+co = cohere.Client(COHERE_API_KEY)
+
 if openai_api_key is not None:
     os.environ["OPENAI_API_KEY"] = openai_api_key
 # logging.basicConfig(level=logging.INFO)
@@ -36,8 +39,8 @@ def clean_value(value):
     return str(value).lower() if isinstance(value, str) else str(value)
 
 def convert_from_postgres(db: Session = Depends(get_db)) -> list[Document]:
-    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
-    query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= '2025-05-13';"
+    query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
+    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= '2025-05-13';"
     # query =  "SELECT title, time, content, url FROM paper"
     result = db.execute(text(query))
 
@@ -119,58 +122,109 @@ def get_context(inputs: Dict[str, str]) -> Dict[str, str]:
     embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
     db = Chroma(persist_directory=db_path, embedding_function=embedding_model)
     relevant_chunks = retrieve_context(db, query)
-    reranker = BGEHFReranker(top_k=10)
-    reranked_docs = reranker.compress_documents(relevant_chunks, query=query)
-    for chunk in reranked_docs:
+    documents_text = [doc.page_content for doc in relevant_chunks]
+    rerank_response = co.rerank(model='rerank-v3.5', query=query, documents=documents_text)
+    reranked_indices = [item.index for item in rerank_response.results]
+    top_10_indices = reranked_indices[:10]  
+    top_10_docs = [relevant_chunks[i] for i in top_10_indices]
+    for chunk in top_10_docs:
         time_info = chunk.metadata.get("time", "Không có thông tin thời gian")
         print(f"Thời gian của chunk: {time_info}")
 
-    context = build_context(reranked_docs)
+    context = build_context(top_10_docs)
     return {"context": context, "query": query}
 
 
+# Hàm định dạng lịch sử hội thoại
+def format_chat_history(chat_messages):
+    result = "\n".join(
+        f"Người dùng: {msg.content}" if isinstance(msg, HumanMessage)
+        else f"Trợ lý: {msg.content}"
+        for msg in chat_messages
+    )
+    print(result)
+    return result
 
 
+# Khởi tạo bộ nhớ ngoài hàm để giữ trạng thái liên tục
+memory = ConversationBufferWindowMemory(
+    k=5,
+    memory_key="chat_history",
+    return_messages=True
+)
 async def rag_chat(question: str):
     db_path = "vector-store"
-    context_data = get_context({"query": question, "db_path": db_path})
-    context = context_data["context"]
-    llm = ChatOpenAI(model="gpt-4o-mini")
-    prompt_template = ChatPromptTemplate.from_template("""
-    Bạn là một trợ lý AI được huấn luyện để trả lời câu hỏi dựa trên thông tin cung cấp.
+    chat_messages = memory.load_memory_variables({})["chat_history"]
 
-    - Chỉ sử dụng thông tin trong phần "Ngữ cảnh" và "Lịch sử hội thoại" để trả lời.
-    - Trả lời NGẮN GỌN, RÕ RÀNG như tóm tắt tin tức.
-    - Không đưa ra suy đoán hoặc thông tin ngoài ngữ cảnh.
+    # 1. Format lịch sử hội thoại
+    chat_history_text = format_chat_history(chat_messages)
+
+    # 2. Chuẩn hóa câu hỏi dựa vào lịch sử (nếu câu hỏi quá ngắn, mơ hồ)
+    normalized_question = await clarify_question(question, chat_history_text)
+
+    # 3. Truy vấn vector store với câu hỏi đã chuẩn hóa
+    context_data = get_context({"query": normalized_question, "db_path": db_path})
+    context = context_data.get("context", "").strip()
+
+    if not context:
+        yield "Xin lỗi, mình không có đủ thông tin để trả lời câu hỏi này."
+        return
+
+    # 4. Tạo prompt với lịch sử + ngữ cảnh + câu hỏi chuẩn hóa
+    prompt_template = """
+    Bạn là một trợ lý AI thông minh. Dựa vào 'Ngữ cảnh' và 'Lịch sử hội thoại' dưới đây, hãy trả lời câu hỏi một cách ngắn gọn, chính xác và chỉ sử dụng thông tin trong ngữ cảnh đã cung cấp.
+
+    - Nếu không có đủ thông tin trong ngữ cảnh, hãy trả lời: "Tôi không có đủ thông tin để trả lời câu hỏi này."
+    - Không phỏng đoán hoặc đưa ra thông tin không có trong ngữ cảnh.
+    - Tránh lặp lại toàn bộ câu hỏi trong câu trả lời.
 
     Lịch sử hội thoại:
-    {history}
+    {chat_history}
 
-    Câu hỏi: {query}
+    Ngữ cảnh:
+    {context}
 
-    Ngữ cảnh: {context}
-    """)
-    # Lấy messages từ memory (history)
-    memory_messages = memory.load_memory_variables({})["history"]
+    Câu hỏi:
+    {query}
+    """
 
-    # Format prompt
-    formatted_prompt = prompt_template.format_messages(
-        query=question,
+
+
+    rag_prompt = ChatPromptTemplate.from_template(prompt_template)
+    formatted_prompt = rag_prompt.format_prompt(
+        query=normalized_question,
         context=context,
-        history=memory_messages
+        chat_history=chat_history_text
     )
 
-    # Gọi LLM với stream
-    stream = llm.astream(formatted_prompt)
-    full_response = ""
+    messages = formatted_prompt.to_messages()
 
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    stream = llm.astream(messages)
+
+    response_text = ""
     async for chunk in stream:
         if isinstance(chunk.content, str):
-            full_response += chunk.content
+            response_text += chunk.content
             yield chunk.content
 
+    memory.save_context({"input": question}, {"output": response_text})
 
-    # Cập nhật lại memory
-    memory.chat_memory.add_user_message(question)
-    memory.chat_memory.add_ai_message(full_response)
 
+async def clarify_question(question: str, chat_history_text: str) -> str:
+    vague_words = ["vậy", "đội nào", "cái gì", "khi nào", "ở đâu","có những","ở trên","trước đó","trên","họ"]
+
+    if any(w in question.lower() for w in vague_words):
+        prompt = f"""Dựa trên lịch sử hội thoại dưới đây, hãy biến câu hỏi ngắn sau thành câu hỏi đầy đủ rõ nghĩa:
+        Lịch sử hội thoại:
+        {chat_history_text}
+
+        Câu hỏi ngắn: {question}
+
+        Câu hỏi đầy đủ:"""
+
+        llm = ChatOpenAI(model="gpt-4o-mini")
+        full_question_response = await llm.agenerate([[HumanMessage(content=prompt)]])
+        return full_question_response.generations[0][0].text.strip()
+
+    return question

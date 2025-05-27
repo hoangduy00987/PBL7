@@ -15,3 +15,4 @@ apscheduler
 pytz
 transformers 
 sentence-transformers
+cohere
