@@ -3,7 +3,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from ..database import get_db, engine
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import Counter
 
 
 def get_topic_trends_month(month: int, year: int, db: Session = Depends(get_db)):
@@ -381,4 +382,246 @@ def get_topic_trends_year(year: int, db: Session = Depends(get_db)):
         "topics": topics,
         "data": data,
         "keywords": keywords_data
+    }
+
+
+def discover_popular_topics_today():
+    # Lấy ngày hiện tại
+    yesterday = datetime.now() - timedelta(days=1)
+    today = yesterday.strftime("%Y-%m-%d")
+
+    # Kết nối cơ sở dữ liệu và lấy dữ liệu
+    with engine.connect() as conn:
+        sql_query = text("""
+            SELECT
+                p.id, 
+                p.category, 
+                p.keyword, 
+                p.time, 
+                tp.topic_name, 
+                tp.topic 
+            FROM paper p 
+            JOIN topic_month tp ON tp.paper_id = p.id
+            WHERE CAST(p.time AS TIMESTAMP) >= :today_start AND CAST(p.time AS TIMESTAMP) < :today_end
+        """)
+        result = conn.execute(sql_query, {
+            "today_start": f"{today} 00:00:00",
+            "today_end": f"{today} 23:59:59"
+        })
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    
+    if df.empty:
+        return {
+            "date": today,
+            "results": [],
+        }
+    
+    # Nhóm các chủ đề theo tên và đếm số lượng
+    topic_counts = df['topic_name'].value_counts().reset_index()
+    topic_counts.columns = ['topic_name', 'count']
+    topics = topic_counts['topic_name'].tolist()
+    counts = topic_counts['count'].tolist()
+    data = []
+    for topic, count in zip(topics, counts):
+        data.append({
+            "topic_name": topic,
+            "count": count
+        })
+    return {
+        "date": today,
+        "results": data
+    }
+
+
+def discover_popular_topics_this_week():
+    # Lấy ngày hiện tại và tính toán ngày bắt đầu và kết thúc của tuần
+    today = datetime.now() - timedelta(days=7)
+    week_start = today - pd.Timedelta(days=today.weekday())  # Thứ Hai
+    week_end = week_start + pd.Timedelta(days=6)  # Chủ Nhật
+
+    # Chuyển đổi sang định dạng chuỗi
+    start_date = week_start.strftime("%Y-%m-%d")
+    end_date = week_end.strftime("%Y-%m-%d")
+
+    # Kết nối cơ sở dữ liệu và lấy dữ liệu
+    with engine.connect() as conn:
+        sql_query = text("""
+            SELECT
+                p.id, 
+                p.category, 
+                p.keyword, 
+                p.time, 
+                tw.topic_name, 
+                tw.topic 
+            FROM paper p 
+            JOIN topic_week tw ON tw.paper_id = p.id
+            WHERE CAST(p.time AS TIMESTAMP) >= :week_start AND CAST(p.time AS TIMESTAMP) <= :week_end
+        """)
+        result = conn.execute(sql_query, {
+            "week_start": f"{start_date} 00:00:00",
+            "week_end": f"{end_date} 23:59:59"
+        })
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    
+    if df.empty:
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "results": [],
+        }
+    
+    # Nhóm các chủ đề theo tên và đếm số lượng
+    topic_counts = df['topic_name'].value_counts().reset_index()
+    topic_counts.columns = ['topic_name', 'count']
+    topics = topic_counts['topic_name'].tolist()
+    counts = topic_counts['count'].tolist()
+    data = []
+    for topic, count in zip(topics, counts):
+        data.append({
+            "topic_name": topic,
+            "count": count
+        })
+    
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "results": data
+    }
+
+
+def discover_popular_topics_this_month():
+    # Lấy ngày hiện tại và tháng hiện tại
+    today = datetime.now()
+    month_start = today.replace(day=1)  # Ngày đầu tiên của tháng
+    month_end = (month_start + pd.DateOffset(months=1)) - pd.Timedelta(days=1)  # Ngày cuối cùng của tháng
+
+    # Chuyển đổi sang định dạng chuỗi
+    start_date = month_start.strftime("%Y-%m-%d")
+    end_date = month_end.strftime("%Y-%m-%d")
+
+    # Kết nối cơ sở dữ liệu và lấy dữ liệu
+    with engine.connect() as conn:
+        sql_query = text("""
+            SELECT
+                p.id, 
+                p.category, 
+                p.keyword, 
+                p.time, 
+                tm.topic_name, 
+                tm.topic 
+            FROM paper p 
+            JOIN topic_month tm ON tm.paper_id = p.id
+            WHERE CAST(p.time AS TIMESTAMP) >= :month_start AND CAST(p.time AS TIMESTAMP) <= :month_end
+        """)
+        result = conn.execute(sql_query, {
+            "month_start": f"{start_date} 00:00:00",
+            "month_end": f"{end_date} 23:59:59"
+        })
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    
+    if df.empty:
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "results": [],
+        }
+    
+    # Nhóm các chủ đề theo tên và đếm số lượng
+    topic_counts = df['topic_name'].value_counts().reset_index()
+    topic_counts.columns = ['topic_name', 'count']
+    topics = topic_counts['topic_name'].tolist()
+    counts = topic_counts['count'].tolist()
+    data = []
+    for topic, count in zip(topics, counts):
+        data.append({
+            "topic_name": topic,
+            "count": count
+        })
+    
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "results": data
+    }
+
+
+# Hàm để lấy category và keyword phổ biến nhất trong mỗi chủ đề
+def analyze_category_keyword(df):
+    topic_info = {}
+    for topic_idx in df['topic'].unique():
+        # Lấy các bài báo thuộc chủ đề hiện tại
+        topic_idx = int(topic_idx)
+        topic_df = df[df['topic'] == topic_idx]
+        
+        # Tìm category phổ biến nhất
+        category_counts = topic_df['category'].value_counts()
+        top_category = category_counts.index[0] if not category_counts.empty else "Unknown"
+        
+        # Tìm keyword phổ biến nhất
+        all_keywords = []
+        for keywords in topic_df['keyword']:
+            if isinstance(keywords, str):
+                all_keywords.extend([kw.strip().lower() for kw in keywords.split(',')])
+        keyword_counts = Counter(all_keywords)
+        # Lấy top 3 keyword phổ biến
+        top_keywords = [kw for kw, count in keyword_counts.most_common(3)]
+        
+        # Loại bỏ từ khóa trùng với top_category
+        top_category_lower = top_category.lower()
+        filtered_keywords = [kw for kw in top_keywords if kw.lower() != top_category_lower]
+        filtered_keywords = [kw for kw in filtered_keywords if kw.lower() != 'null']
+        filtered_keywords = [kw for kw in filtered_keywords if kw.lower() != 'nan']
+
+        topic_info[topic_idx] = {
+            'top_category': top_category,
+            'top_keywords': filtered_keywords
+        }
+    
+    return topic_info
+
+
+def discover_hot_keywords():
+    # Lấy ngày hiện tại và tháng hiện tại
+    today = datetime.now()
+    month_start = today.replace(day=1)  # Ngày đầu tiên của tháng
+    month_end = (month_start + pd.DateOffset(months=1)) - pd.Timedelta(days=1)  # Ngày cuối cùng của tháng
+
+    # Chuyển đổi sang định dạng chuỗi
+    start_date = month_start.strftime("%Y-%m-%d")
+    end_date = month_end.strftime("%Y-%m-%d")
+
+    # Kết nối cơ sở dữ liệu và lấy dữ liệu
+    with engine.connect() as conn:
+        sql_query = text("""
+            SELECT
+                p.id, 
+                p.category, 
+                p.keyword, 
+                p.time, 
+                tm.topic_name, 
+                tm.topic 
+            FROM paper p 
+            JOIN topic_month tm ON tm.paper_id = p.id
+            WHERE CAST(p.time AS TIMESTAMP) >= :month_start AND CAST(p.time AS TIMESTAMP) <= :month_end
+        """)
+        result = conn.execute(sql_query, {
+            "month_start": f"{start_date} 00:00:00",
+            "month_end": f"{end_date} 23:59:59"
+        })
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    
+    if df.empty:
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "results": {},
+        }
+    
+    print("helo")
+    topic_info = analyze_category_keyword(df)
+    print('topic_info:', topic_info)
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "results": topic_info
     }

@@ -3,7 +3,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from ..database import get_db
-from .lda_feature import get_topic_trends_week, get_topic_trends_month, get_topic_trends_quarter, get_topic_trends_year
+from .lda_feature import (get_topic_trends_week, get_topic_trends_month, get_topic_trends_quarter, get_topic_trends_year,
+                          discover_popular_topics_today, discover_popular_topics_this_week, discover_popular_topics_this_month,
+                          discover_hot_keywords
+)
 from .redis_cache import cache_redis, get_cache
 
 
@@ -117,4 +120,84 @@ async def fetch_topic_trends_in_year(year: int, db: Session = Depends(get_db)):
         return trends
     except Exception as e:
         print("Error when fetching topic trend year:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@lda_router.get("/popular-topics-today/")
+async def fetch_popular_topics_today():
+    try:
+        cache_key = 'popular-topics-today'
+        cached = get_cache(cache_key)
+        if cached:
+            print(f'Cache hit for {cache_key}')
+            return cached
+        
+        print(f'Cache miss for {cache_key}, fetching from Database...')
+        topics = discover_popular_topics_today()
+        
+        cache_redis(cache_key, topics)
+        
+        return topics
+    except Exception as e:
+        print("Error when fetching popular topics today:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@lda_router.get("/popular-topics-this-week/")
+async def fetch_popular_topics_this_week():
+    try:
+        cache_key = 'popular-topics-this-week'
+        cached = get_cache(cache_key)
+        if cached:
+            print(f'Cache hit for {cache_key}')
+            return cached
+        
+        print(f'Cache miss for {cache_key}, fetching from Database...')
+        topics = discover_popular_topics_this_week()
+        
+        cache_redis(cache_key, topics)
+        
+        return topics
+    except Exception as e:
+        print("Error when fetching popular topics this week:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@lda_router.get("/popular-topics-this-month/")
+async def fetch_popular_topics_this_month():
+    try:
+        cache_key = 'popular-topics-this-month'
+        cached = get_cache(cache_key)
+        if cached:
+            print(f'Cache hit for {cache_key}')
+            return cached
+        
+        print(f'Cache miss for {cache_key}, fetching from Database...')
+        topics = discover_popular_topics_this_month()
+        
+        cache_redis(cache_key, topics)
+        
+        return topics
+    except Exception as e:
+        print("Error when fetching popular topics this month:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@lda_router.get("/hot-keywords")
+async def fetch_hot_keywords():
+    try:
+        cache_key = 'hot-keywords'
+        cached = get_cache(cache_key)
+        if cached:
+            print(f'Cache hit for {cache_key}')
+            return cached
+        
+        print(f'Cache miss for {cache_key}, fetching from Database...')
+        results = discover_hot_keywords()
+        
+        cache_redis(cache_key, results)
+        
+        return results
+    except Exception as e:
+        print("Error when fetching popular topics this month:", e)
         raise HTTPException(status_code=500, detail=str(e))
