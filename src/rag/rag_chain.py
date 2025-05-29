@@ -175,7 +175,7 @@ async def rag_chat(question: str):
 
     # 4. Tạo prompt với lịch sử + ngữ cảnh + câu hỏi chuẩn hóa
     prompt_template = """
-    Bạn là một trợ lý AI thông minh. Dựa vào 'Ngữ cảnh' và 'Lịch sử hội thoại' dưới đây, hãy trả lời câu hỏi một cách ngắn gọn, chính xác và chỉ sử dụng thông tin trong ngữ cảnh đã cung cấp.
+    Bạn là một trợ lý AI thông minh. Dựa vào 'Ngữ cảnh' và 'Lịch sử hội thoại' dưới đây, hãy trả lời câu hỏi một cách chính xác, chi tiết nhưng không quá dài dòng và chỉ sử dụng thông tin trong ngữ cảnh đã cung cấp.
 
     - Nếu không có đủ thông tin trong ngữ cảnh, hãy trả lời: "Tôi không có đủ thông tin để trả lời câu hỏi này."
     - Không phỏng đoán hoặc đưa ra thông tin không có trong ngữ cảnh.
@@ -211,7 +211,8 @@ async def rag_chat(question: str):
             response_text += chunk.content
             yield chunk.content
     if not is_similar(response_text.strip(), "Tôi không có đủ thông tin để trả lời câu hỏi này") and url:
-        yield f"\n\nBạn có thể đọc chi tiết thông tin tại đây: {url}"
+        # yield f"\n\nBạn có thể đọc chi tiết thông tin tại đây: {url}"
+        yield ""
 
     memory.save_context({"input": question}, {"output": response_text})
 
