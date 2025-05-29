@@ -395,6 +395,9 @@ def discover_popular_topics_today():
         sql_query = text("""
             SELECT
                 p.id, 
+                p.source,
+                p.url,
+                p.title,
                 p.category, 
                 p.keyword, 
                 p.time, 
@@ -419,13 +422,17 @@ def discover_popular_topics_today():
     # Nhóm các chủ đề theo tên và đếm số lượng
     topic_counts = df['topic_name'].value_counts().reset_index()
     topic_counts.columns = ['topic_name', 'count']
-    topics = topic_counts['topic_name'].tolist()
-    counts = topic_counts['count'].tolist()
+    # topics = topic_counts['topic_name'].tolist()
+    # counts = topic_counts['count'].tolist()
+    # Lấy thông tin chi tiết của tối đa 5 bài báo cho mỗi chủ đề
     data = []
-    for topic, count in zip(topics, counts):
+    for topic in topic_counts['topic_name']:
+        # Lấy các bài báo thuộc chủ đề này
+        topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
         data.append({
-            "topic_name": topic,
-            "count": count
+            "topic_name": topic.replace("_", " "),
+            "count": int(topic_counts[topic_counts['topic_name'] == topic]['count'].iloc[0]),
+            "papers": topic_papers  # Danh sách các bài báo (tối đa 5)
         })
     return {
         "date": today,
@@ -448,6 +455,9 @@ def discover_popular_topics_this_week():
         sql_query = text("""
             SELECT
                 p.id, 
+                p.source,
+                p.url,
+                p.title,
                 p.category, 
                 p.keyword, 
                 p.time, 
@@ -473,13 +483,17 @@ def discover_popular_topics_this_week():
     # Nhóm các chủ đề theo tên và đếm số lượng
     topic_counts = df['topic_name'].value_counts().reset_index()
     topic_counts.columns = ['topic_name', 'count']
-    topics = topic_counts['topic_name'].tolist()
-    counts = topic_counts['count'].tolist()
+    # topics = topic_counts['topic_name'].tolist()
+    # counts = topic_counts['count'].tolist()
+    # Lấy thông tin chi tiết của tối đa 5 bài báo cho mỗi chủ đề
     data = []
-    for topic, count in zip(topics, counts):
+    for topic in topic_counts['topic_name']:
+        # Lấy các bài báo thuộc chủ đề này
+        topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
         data.append({
-            "topic_name": topic,
-            "count": count
+            "topic_name": topic.replace("_", " "),
+            "count": int(topic_counts[topic_counts['topic_name'] == topic]['count'].iloc[0]),
+            "papers": topic_papers  # Danh sách các bài báo (tối đa 5)
         })
     
     return {
@@ -504,6 +518,9 @@ def discover_popular_topics_this_month():
         sql_query = text("""
             SELECT
                 p.id, 
+                p.source,
+                p.url,
+                p.title,
                 p.category, 
                 p.keyword, 
                 p.time, 
@@ -529,13 +546,17 @@ def discover_popular_topics_this_month():
     # Nhóm các chủ đề theo tên và đếm số lượng
     topic_counts = df['topic_name'].value_counts().reset_index()
     topic_counts.columns = ['topic_name', 'count']
-    topics = topic_counts['topic_name'].tolist()
-    counts = topic_counts['count'].tolist()
+    # topics = topic_counts['topic_name'].tolist()
+    # counts = topic_counts['count'].tolist()
+    # Lấy thông tin chi tiết của tối đa 5 bài báo cho mỗi chủ đề
     data = []
-    for topic, count in zip(topics, counts):
+    for topic in topic_counts['topic_name']:
+        # Lấy các bài báo thuộc chủ đề này
+        topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
         data.append({
-            "topic_name": topic,
-            "count": count
+            "topic_name": topic.replace("_", " "),
+            "count": int(topic_counts[topic_counts['topic_name'] == topic]['count'].iloc[0]),
+            "papers": topic_papers  # Danh sách các bài báo (tối đa 5)
         })
     
     return {
