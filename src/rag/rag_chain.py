@@ -40,8 +40,8 @@ def clean_value(value):
     return str(value).lower() if isinstance(value, str) else str(value)
 
 def convert_from_postgres(db: Session = Depends(get_db)) -> list[Document]:
-    query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
-    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= '2025-05-13';"
+    # query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= (CURRENT_DATE - INTERVAL '1 day');"
+    query = "SELECT title, time, content, url  FROM paper WHERE time::timestamp >= '2025-06-09';"
     # query =  "SELECT title, time, content, url FROM paper"
     result = db.execute(text(query))
 
@@ -164,6 +164,7 @@ async def rag_chat(question: str):
 
     # 2. Chuẩn hóa câu hỏi dựa vào lịch sử (nếu câu hỏi quá ngắn, mơ hồ)
     normalized_question = await clarify_question(question, chat_history_text)
+    print("normalized_question:", normalized_question)
 
     # 3. Truy vấn vector store với câu hỏi đã chuẩn hóa
     context_data = get_context({"query": normalized_question, "db_path": db_path})

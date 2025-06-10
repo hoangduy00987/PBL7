@@ -51,15 +51,20 @@ async def fetch_topic_trends_in_month(month: int, year: int, db: Session = Depen
         year = year or current.year
         
         cache_key = f'trending-month:{month}-{year}'
+        start_time = datetime.now()
         cached = get_cache(cache_key)
         if cached:
-            print(f'Cache hit for {cache_key}')
+            duration = (datetime.now() - start_time).total_seconds()
+            print(f'Cache hit for {cache_key} (took {duration:.4f} seconds)')
             return cached
         
         print(f'Cache miss for {cache_key}, fetching from Database...')
         trends = get_topic_trends_month(month=month, year=year, db=db)
         
         cache_redis(cache_key, trends)
+
+        duration = (datetime.now() - start_time).total_seconds()
+        print(f'Data fetched from DB and cached (took {duration:.4f} seconds)')
         
         return trends
     except Exception as e:
