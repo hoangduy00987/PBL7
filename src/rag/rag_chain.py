@@ -134,10 +134,8 @@ def get_context(inputs: Dict[str, str]) -> Dict[str, str]:
     url = top_10_docs[0].metadata.get("url") if top_10_docs else ""
     print(f"========{url}")
     context = build_context(top_10_docs)
-    return {"context": context, "query": query, "url": url if url is not None else ""}
+    return {"context": context, "query": query}
 
-def is_similar(a, b, threshold=0.85):
-    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio() >= threshold
 # Hàm định dạng lịch sử hội thoại
 def format_chat_history(chat_messages):
     result = "\n".join(
@@ -169,7 +167,6 @@ async def rag_chat(question: str):
     # 3. Truy vấn vector store với câu hỏi đã chuẩn hóa
     context_data = get_context({"query": normalized_question, "db_path": db_path})
     context = context_data.get("context", "").strip()
-    url = context_data.get("url", "").strip()
     if not context:
         yield "Xin lỗi, mình không có đủ thông tin để trả lời câu hỏi này."
         return
@@ -211,15 +208,12 @@ async def rag_chat(question: str):
         if isinstance(chunk.content, str):
             response_text += chunk.content
             yield chunk.content
-    if not is_similar(response_text.strip(), "Tôi không có đủ thông tin để trả lời câu hỏi này") and url:
-        # yield f"\n\nBạn có thể đọc chi tiết thông tin tại đây: {url}"
-        yield ""
 
     memory.save_context({"input": question}, {"output": response_text})
 
 
 async def clarify_question(question: str, chat_history_text: str) -> str:
-    vague_words = ["vậy", "đội nào", "cái gì", "khi nào", "ở đâu","có những","ở trên","trước đó","trên","họ","này"]
+    vague_words = ["vậy", "đội nào", "cái gì", "khi nào", "ở đâu","có những","ở trên","trước đó","trên","họ","này","lúc này","làm gì"]
 
     if any(w in question.lower() for w in vague_words):
         prompt = f"""Dựa trên lịch sử hội thoại dưới đây, hãy biến câu hỏi ngắn sau thành câu hỏi đầy đủ rõ nghĩa:
