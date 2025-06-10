@@ -5,6 +5,8 @@ from ..database import get_db, engine
 import pandas as pd
 from datetime import datetime, timedelta
 from collections import Counter
+from scipy.stats import linregress
+from difflib import get_close_matches
 
 
 def get_topic_trends_month(month: int, year: int, db: Session = Depends(get_db)):
@@ -47,6 +49,9 @@ def get_topic_trends_month(month: int, year: int, db: Session = Depends(get_db))
     df['day'] = df['time'].dt.day
     df['Topic'] = df['topic']
     df['Topic_Name'] = df['topic_name']
+
+    for idx, row in df.sample(5).iterrows():
+        print(f"Tài liệu: {row['tokens'][:100]}... | Chủ đề: {row['Topic_Name']}")
 
     keywords_data = {}
     result = db.execute(
@@ -428,7 +433,14 @@ def discover_popular_topics_today():
     data = []
     for topic in topic_counts['topic_name']:
         # Lấy các bài báo thuộc chủ đề này
-        topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
+        temp_df = df[df['topic_name'] == topic]
+        matches = get_close_matches(topic, temp_df['title'], n=5, cutoff=0.2)
+        print(f"Matches for topic '{topic}': {matches}")
+        if len(matches) > 0:
+            topic_papers = temp_df[temp_df['title'].isin(matches)][['source', 'url', 'title']].head(5).to_dict('records')
+        else:
+            topic_papers = temp_df[['source', 'url', 'title']].head(5).to_dict('records')
+        # topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
         data.append({
             "topic_name": topic.replace("_", " "),
             "count": int(topic_counts[topic_counts['topic_name'] == topic]['count'].iloc[0]),
@@ -478,7 +490,14 @@ def discover_popular_topics_this_week():
             "start_date": start_date,
             "end_date": end_date,
             "results": [],
+            "hot_topics": [],
+            "cold_topics": []
         }
+    
+    df['time'] = pd.to_datetime(df['time'], format='%Y-%m-%d %H:%M:%S')
+    df['year'] = df['time'].dt.year
+    df['month'] = df['time'].dt.month
+    df['day'] = df['time'].dt.day
     
     # Nhóm các chủ đề theo tên và đếm số lượng
     topic_counts = df['topic_name'].value_counts().reset_index()
@@ -489,17 +508,44 @@ def discover_popular_topics_this_week():
     data = []
     for topic in topic_counts['topic_name']:
         # Lấy các bài báo thuộc chủ đề này
-        topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
+        temp_df = df[df['topic_name'] == topic]
+        matches = get_close_matches(topic, temp_df['title'], n=5, cutoff=0.2)
+        print(f"Matches for topic '{topic}': {matches}")
+        if len(matches) > 0:
+            topic_papers = temp_df[temp_df['title'].isin(matches)][['source', 'url', 'title']].head(5).to_dict('records')
+        else:
+            topic_papers = temp_df[['source', 'url', 'title']].head(5).to_dict('records')
+        # topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
         data.append({
             "topic_name": topic.replace("_", " "),
             "count": int(topic_counts[topic_counts['topic_name'] == topic]['count'].iloc[0]),
             "papers": topic_papers  # Danh sách các bài báo (tối đa 5)
         })
     
+    hot_topics = []
+    cold_topics = []
+    trend_data = df.groupby(['year', 'month', 'day', 'topic_name']).size().unstack(fill_value=0)
+    trend_data = trend_data.div(trend_data.sum(axis=1), axis=0)
+
+    for topic in trend_data.columns:
+        slope, _, _, p_value, _ = linregress(range(len(trend_data)), trend_data[topic])
+        trend = "Tăng" if slope > 0 else "Giảm"
+        if p_value < 0.05:
+            if slope > 0:
+                hot_topics.append(topic.replace("_", " "))
+                print(f'Chủ đề {topic}: Hot (Tăng đáng kể, p-value = {p_value:.4f})')
+            else:
+                cold_topics.append(topic.replace("_", " "))
+                print(f'Chủ đề {topic}: Cold (Giảm đáng kể, p-value = {p_value:.4f})')
+        else:
+            print(f'Chủ đề {topic}: Stable (Không có xu hướng rõ ràng, p-value = {p_value:.4f})')
+    
     return {
         "start_date": start_date,
         "end_date": end_date,
-        "results": data
+        "results": data,
+        "hot_topics": hot_topics,
+        "cold_topics": cold_topics
     }
 
 
@@ -541,7 +587,14 @@ def discover_popular_topics_this_month():
             "start_date": start_date,
             "end_date": end_date,
             "results": [],
+            "hot_topics": [],
+            "cold_topics": []
         }
+    
+    df['time'] = pd.to_datetime(df['time'], format='%Y-%m-%d %H:%M:%S')
+    df['year'] = df['time'].dt.year
+    df['month'] = df['time'].dt.month
+    df['day'] = df['time'].dt.day
     
     # Nhóm các chủ đề theo tên và đếm số lượng
     topic_counts = df['topic_name'].value_counts().reset_index()
@@ -552,17 +605,44 @@ def discover_popular_topics_this_month():
     data = []
     for topic in topic_counts['topic_name']:
         # Lấy các bài báo thuộc chủ đề này
-        topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
+        temp_df = df[df['topic_name'] == topic]
+        matches = get_close_matches(topic, temp_df['title'], n=5, cutoff=0.2)
+        print(f"Matches for topic '{topic}': {matches}")
+        if len(matches) > 0:
+            topic_papers = temp_df[temp_df['title'].isin(matches)][['source', 'url', 'title']].head(5).to_dict('records')
+        else:
+            topic_papers = temp_df[['source', 'url', 'title']].head(5).to_dict('records')
+        # topic_papers = df[df['topic_name'] == topic][['source', 'url', 'title']].head(5).to_dict('records')
         data.append({
             "topic_name": topic.replace("_", " "),
             "count": int(topic_counts[topic_counts['topic_name'] == topic]['count'].iloc[0]),
             "papers": topic_papers  # Danh sách các bài báo (tối đa 5)
         })
     
+    hot_topics = []
+    cold_topics = []
+    trend_data = df.groupby(['year', 'month', 'day', 'topic_name']).size().unstack(fill_value=0)
+    trend_data = trend_data.div(trend_data.sum(axis=1), axis=0)
+
+    for topic in trend_data.columns:
+        slope, _, _, p_value, _ = linregress(range(len(trend_data)), trend_data[topic])
+        trend = "Tăng" if slope > 0 else "Giảm"
+        if p_value < 0.05:
+            if slope > 0:
+                hot_topics.append(topic.replace("_", " "))
+                print(f'Chủ đề {topic}: Hot (Tăng đáng kể, p-value = {p_value:.4f})')
+            else:
+                cold_topics.append(topic.replace("_", " "))
+                print(f'Chủ đề {topic}: Cold (Giảm đáng kể, p-value = {p_value:.4f})')
+        else:
+            print(f'Chủ đề {topic}: Stable (Không có xu hướng rõ ràng, p-value = {p_value:.4f})')
+    
     return {
         "start_date": start_date,
         "end_date": end_date,
-        "results": data
+        "results": data,
+        "hot_topics": hot_topics,
+        "cold_topics": cold_topics
     }
 
 
